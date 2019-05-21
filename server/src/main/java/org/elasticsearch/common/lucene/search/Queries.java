@@ -24,7 +24,6 @@ import org.apache.lucene.queries.ExtendedCommonTermsQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocValuesFieldExistsQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
@@ -32,11 +31,12 @@ import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.mapper.SeqNoFieldMapper;
 import org.elasticsearch.index.mapper.TypeFieldMapper;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -53,7 +53,11 @@ public class Queries {
 
 
     public static Query newUnmappedFieldQuery(String field) {
-        return Queries.newMatchNoDocsQuery("unmapped field [" + (field != null ? field : "null") + "]");
+        return newUnmappedFieldsQuery(Collections.singletonList(field));
+    }
+
+    public static Query newUnmappedFieldsQuery(Collection<String> fields) {
+        return Queries.newMatchNoDocsQuery("unmapped fields " + fields);
     }
 
     public static Query newLenientFieldQuery(String field, RuntimeException e) {
@@ -67,17 +71,9 @@ public class Queries {
 
     /**
      * Creates a new non-nested docs query
-     * @param indexVersionCreated the index version created since newer indices can identify a parent field more efficiently
      */
-    public static Query newNonNestedFilter(Version indexVersionCreated) {
-        if (indexVersionCreated.onOrAfter(Version.V_6_1_0)) {
-            return new DocValuesFieldExistsQuery(SeqNoFieldMapper.PRIMARY_TERM_NAME);
-        } else {
-            return new BooleanQuery.Builder()
-                .add(new MatchAllDocsQuery(), Occur.FILTER)
-                .add(newNestedFilter(), Occur.MUST_NOT)
-                .build();
-        }
+    public static Query newNonNestedFilter() {
+        return new DocValuesFieldExistsQuery(SeqNoFieldMapper.PRIMARY_TERM_NAME);
     }
 
     public static BooleanQuery filtered(@Nullable Query query, @Nullable Query filter) {
@@ -99,18 +95,13 @@ public class Queries {
             .build();
     }
 
-    private static boolean isNegativeQuery(Query q) {
+    static boolean isNegativeQuery(Query q) {
         if (!(q instanceof BooleanQuery)) {
             return false;
         }
         List<BooleanClause> clauses = ((BooleanQuery) q).clauses();
-        if (clauses.isEmpty()) {
-            return false;
-        }
-        for (BooleanClause clause : clauses) {
-            if (!clause.isProhibited()) return false;
-        }
-        return true;
+        return clauses.isEmpty() == false &&
+                clauses.stream().allMatch(BooleanClause::isProhibited);
     }
 
     public static Query fixNegativeQueryIfNeeded(Query q) {
@@ -120,7 +111,7 @@ public class Queries {
             for (BooleanClause clause : bq) {
                 builder.add(clause);
             }
-            builder.add(newMatchAllQuery(), BooleanClause.Occur.MUST);
+            builder.add(newMatchAllQuery(), BooleanClause.Occur.FILTER);
             return builder.build();
         }
         return q;

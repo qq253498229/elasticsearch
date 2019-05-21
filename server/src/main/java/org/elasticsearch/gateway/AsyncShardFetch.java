@@ -21,7 +21,6 @@ package org.elasticsearch.gateway;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
@@ -47,7 +46,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static java.util.Collections.emptySet;
-import static java.util.Collections.unmodifiableSet;
 
 /**
  * Allows to asynchronously fetch shard related data from other nodes for allocation, without blocking
@@ -153,7 +151,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                     }
                 }
             }
-            Set<String> allIgnoreNodes = unmodifiableSet(new HashSet<>(nodesToIgnore));
+            Set<String> allIgnoreNodes = Set.copyOf(nodesToIgnore);
             // clear the nodes to ignore, we had a successful run in fetching everything we can
             // we need to try them if another full run is needed
             nodesToIgnore.clear();
@@ -217,7 +215,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                             unwrappedCause instanceof ElasticsearchTimeoutException) {
                             nodeEntry.restartFetching();
                         } else {
-                            logger.warn((Supplier<?>) () -> new ParameterizedMessage("{}: failed to list shard for {} on node [{}]",
+                            logger.warn(() -> new ParameterizedMessage("{}: failed to list shard for {} on node [{}]",
                                 shardId, type, failure.nodeId()), failure);
                             nodeEntry.doneFetching(failure.getCause());
                         }
@@ -246,12 +244,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             }
         }
         // remove nodes that are not longer part of the data nodes set
-        for (Iterator<String> it = shardCache.keySet().iterator(); it.hasNext(); ) {
-            String nodeId = it.next();
-            if (nodes.nodeExists(nodeId) == false) {
-                it.remove();
-            }
-        }
+        shardCache.keySet().removeIf(nodeId -> !nodes.nodeExists(nodeId));
     }
 
     /**

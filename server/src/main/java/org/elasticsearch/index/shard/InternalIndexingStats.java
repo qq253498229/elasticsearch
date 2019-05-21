@@ -19,10 +19,10 @@
 
 package org.elasticsearch.index.shard;
 
-import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.regex.Regex;
+import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.index.engine.Engine;
 
 import java.util.HashMap;
@@ -42,7 +42,7 @@ final class InternalIndexingStats implements IndexingOperationListener {
     /**
      * Returns the stats, including type specific stats. If the types are null/0 length, then nothing
      * is returned for them. If they are set, then only types provided will be returned, or
-     * <tt>_all</tt> for all types.
+     * {@code _all} for all types.
      */
     IndexingStats stats(boolean isThrottled, long currentThrottleInMillis, String... types) {
         IndexingStats.Stats total = totalStats.stats(isThrottled, currentThrottleInMillis);
@@ -66,7 +66,7 @@ final class InternalIndexingStats implements IndexingOperationListener {
 
     @Override
     public Engine.Index preIndex(ShardId shardId, Engine.Index operation) {
-        if (!operation.origin().isRecovery()) {
+        if (operation.origin().isRecovery() == false) {
             totalStats.indexCurrent.inc();
             typeStats(operation.type()).indexCurrent.inc();
         }
@@ -75,17 +75,22 @@ final class InternalIndexingStats implements IndexingOperationListener {
 
     @Override
     public void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {
-        if (result.hasFailure() == false) {
-            if (!index.origin().isRecovery()) {
-                long took = result.getTook();
-                totalStats.indexMetric.inc(took);
-                totalStats.indexCurrent.dec();
-                StatsHolder typeStats = typeStats(index.type());
-                typeStats.indexMetric.inc(took);
-                typeStats.indexCurrent.dec();
-            }
-        } else {
-            postIndex(shardId, index, result.getFailure());
+        switch (result.getResultType()) {
+            case SUCCESS:
+                if (index.origin().isRecovery() == false) {
+                    long took = result.getTook();
+                    totalStats.indexMetric.inc(took);
+                    totalStats.indexCurrent.dec();
+                    StatsHolder typeStats = typeStats(index.type());
+                    typeStats.indexMetric.inc(took);
+                    typeStats.indexCurrent.dec();
+                }
+                break;
+            case FAILURE:
+                postIndex(shardId, index, result.getFailure());
+                break;
+            default:
+                throw new IllegalArgumentException("unknown result type: " + result.getResultType());
         }
     }
 
@@ -111,17 +116,22 @@ final class InternalIndexingStats implements IndexingOperationListener {
 
     @Override
     public void postDelete(ShardId shardId, Engine.Delete delete, Engine.DeleteResult result) {
-        if (result.hasFailure() == false) {
-            if (!delete.origin().isRecovery()) {
-                long took = result.getTook();
-                totalStats.deleteMetric.inc(took);
-                totalStats.deleteCurrent.dec();
-                StatsHolder typeStats = typeStats(delete.type());
-                typeStats.deleteMetric.inc(took);
-                typeStats.deleteCurrent.dec();
-            }
-        } else {
-            postDelete(shardId, delete, result.getFailure());
+        switch (result.getResultType()) {
+            case SUCCESS:
+                if (!delete.origin().isRecovery()) {
+                    long took = result.getTook();
+                    totalStats.deleteMetric.inc(took);
+                    totalStats.deleteCurrent.dec();
+                    StatsHolder typeStats = typeStats(delete.type());
+                    typeStats.deleteMetric.inc(took);
+                    typeStats.deleteCurrent.dec();
+                }
+                break;
+            case FAILURE:
+                postDelete(shardId, delete, result.getFailure());
+                break;
+            default:
+                throw new IllegalArgumentException("unknown result type: " + result.getResultType());
         }
     }
 
@@ -145,7 +155,7 @@ final class InternalIndexingStats implements IndexingOperationListener {
                 stats = typesStats.get(type);
                 if (stats == null) {
                     stats = new StatsHolder();
-                    typesStats = MapBuilder.newMapBuilder(typesStats).put(type, stats).immutableMap();
+                    typesStats = Maps.copyMapWithAddedEntry(typesStats, type, stats);
                 }
             }
         }

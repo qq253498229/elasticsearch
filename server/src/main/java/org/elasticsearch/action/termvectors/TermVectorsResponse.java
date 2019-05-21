@@ -103,6 +103,20 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
     TermVectorsResponse() {
     }
 
+    TermVectorsResponse(StreamInput in) throws IOException {
+        index = in.readString();
+        type = in.readString();
+        id = in.readString();
+        docVersion = in.readVLong();
+        exists = in.readBoolean();
+        artificial = in.readBoolean();
+        tookInMillis = in.readVLong();
+        if (in.readBoolean()) {
+            headerRef = in.readBytesReference();
+            termVectors = in.readBytesReference();
+        }
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(index);
@@ -127,17 +141,7 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
-        index = in.readString();
-        type = in.readString();
-        id = in.readString();
-        docVersion = in.readVLong();
-        exists = in.readBoolean();
-        artificial = in.readBoolean();
-        tookInMillis = in.readVLong();
-        if (in.readBoolean()) {
-            headerRef = in.readBytesReference();
-            termVectors = in.readBytesReference();
-        }
+        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 
     public Fields getFields() throws IOException {
@@ -197,7 +201,8 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
         return builder;
     }
 
-    private void buildField(XContentBuilder builder, final CharsRefBuilder spare, Fields theFields, Iterator<String> fieldIter) throws IOException {
+    private void buildField(XContentBuilder builder, final CharsRefBuilder spare,
+                            Fields theFields, Iterator<String> fieldIter) throws IOException {
         String fieldName = fieldIter.next();
         builder.startObject(fieldName);
         Terms curTerms = theFields.terms(fieldName);
@@ -213,7 +218,8 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
         builder.endObject();
     }
 
-    private void buildTerm(XContentBuilder builder, final CharsRefBuilder spare, Terms curTerms, TermsEnum termIter, BoostAttribute boostAtt) throws IOException {
+    private void buildTerm(XContentBuilder builder, final CharsRefBuilder spare, Terms curTerms,
+                           TermsEnum termIter, BoostAttribute boostAtt) throws IOException {
         // start term, optimized writing
         BytesRef term = termIter.next();
         spare.copyUTF8Bytes(term);
@@ -235,7 +241,8 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
         // boolean that says if these values actually were requested.
         // However, we can assume that they were not if the statistic values are
         // <= 0.
-        assert (((termIter.docFreq() > 0) && (termIter.totalTermFreq() > 0)) || ((termIter.docFreq() == -1) && (termIter.totalTermFreq() == -1)));
+        assert (((termIter.docFreq() > 0) && (termIter.totalTermFreq() > 0)) ||
+            ((termIter.docFreq() == -1) && (termIter.totalTermFreq() == -1)));
         int docFreq = termIter.docFreq();
         if (docFreq > 0) {
             builder.field(FieldStrings.DOC_FREQ, docFreq);
@@ -259,7 +266,8 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
                 builder.field(FieldStrings.END_OFFSET, currentEndOffset[i]);
             }
             if (curTerms.hasPayloads() && (currentPayloads[i].length() > 0)) {
-                builder.field(FieldStrings.PAYLOAD, currentPayloads[i]);
+                BytesRef bytesRef = currentPayloads[i].toBytesRef();
+                builder.field(FieldStrings.PAYLOAD, bytesRef.bytes, bytesRef.offset, bytesRef.length);
             }
             builder.endObject();
         }
@@ -348,12 +356,13 @@ public class TermVectorsResponse extends ActionResponse implements ToXContentObj
          this.exists = exists;
     }
 
-    public void setFields(Fields termVectorsByField, Set<String> selectedFields, EnumSet<Flag> flags, Fields topLevelFields) throws IOException {
+    public void setFields(Fields termVectorsByField, Set<String> selectedFields,
+                          EnumSet<Flag> flags, Fields topLevelFields) throws IOException {
         setFields(termVectorsByField, selectedFields, flags, topLevelFields, null, null);
     }
 
-    public void setFields(Fields termVectorsByField, Set<String> selectedFields, EnumSet<Flag> flags, Fields topLevelFields, @Nullable AggregatedDfs dfs,
-                          TermVectorsFilter termVectorsFilter) throws IOException {
+    public void setFields(Fields termVectorsByField, Set<String> selectedFields, EnumSet<Flag> flags,
+                          Fields topLevelFields, @Nullable AggregatedDfs dfs, TermVectorsFilter termVectorsFilter) throws IOException {
         TermVectorsWriter tvw = new TermVectorsWriter(this);
 
         if (termVectorsByField != null) {

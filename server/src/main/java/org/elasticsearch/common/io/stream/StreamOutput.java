@@ -30,11 +30,16 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.io.stream.Writeable.Writer;
 import org.elasticsearch.common.text.Text;
+import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
+import org.elasticsearch.script.JodaCompatibleZonedDateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.ReadableInstant;
 
@@ -50,15 +55,23 @@ import java.nio.file.FileSystemException;
 import java.nio.file.FileSystemLoopException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.NotDirectoryException;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.IntFunction;
+
+import static java.util.Map.entry;
 
 /**
  * A stream from another node to this node. Technically, it can also be streamed from a byte array but that is mostly for testing.
@@ -73,7 +86,27 @@ import java.util.function.IntFunction;
  */
 public abstract class StreamOutput extends OutputStream {
 
+    private static final Map<TimeUnit, Byte> TIME_UNIT_BYTE_MAP;
+
+    static {
+        final Map<TimeUnit, Byte> timeUnitByteMap = new EnumMap<>(TimeUnit.class);
+        timeUnitByteMap.put(TimeUnit.NANOSECONDS, (byte)0);
+        timeUnitByteMap.put(TimeUnit.MICROSECONDS, (byte)1);
+        timeUnitByteMap.put(TimeUnit.MILLISECONDS, (byte)2);
+        timeUnitByteMap.put(TimeUnit.SECONDS, (byte)3);
+        timeUnitByteMap.put(TimeUnit.MINUTES, (byte)4);
+        timeUnitByteMap.put(TimeUnit.HOURS, (byte)5);
+        timeUnitByteMap.put(TimeUnit.DAYS, (byte)6);
+
+        for (TimeUnit value : TimeUnit.values()) {
+            assert timeUnitByteMap.containsKey(value) : value;
+        }
+
+        TIME_UNIT_BYTE_MAP = Collections.unmodifiableMap(timeUnitByteMap);
+    }
+
     private Version version = Version.CURRENT;
+    private Set<String> features = Collections.emptySet();
 
     /**
      * The version of the node on the other side of this stream.
@@ -87,6 +120,27 @@ public abstract class StreamOutput extends OutputStream {
      */
     public void setVersion(Version version) {
         this.version = version;
+    }
+
+    /**
+     * Test if the stream has the specified feature. Features are used when serializing {@link ClusterState.Custom} or
+     * {@link MetaData.Custom}; see also {@link ClusterState.FeatureAware}.
+     *
+     * @param feature the feature to test
+     * @return true if the stream has the specified feature
+     */
+    public boolean hasFeature(final String feature) {
+        return this.features.contains(feature);
+    }
+
+    /**
+     * Set the features on the stream. See {@link StreamOutput#hasFeature(String)}.
+     *
+     * @param features the features on the stream
+     */
+    public void setFeatures(final Set<String> features) {
+        assert this.features.isEmpty() : this.features;
+        this.features = Set.copyOf(features);
     }
 
     public long position() throws IOException {
@@ -267,6 +321,18 @@ public abstract class StreamOutput extends OutputStream {
         } else {
             writeBoolean(true);
             writeString(str);
+        }
+    }
+
+    /**
+     * Writes an optional {@link Integer}.
+     */
+    public void writeOptionalInt(@Nullable Integer integer) throws IOException {
+        if (integer == null) {
+            writeBoolean(false);
+        } else {
+            writeBoolean(true);
+            writeInt(integer);
         }
     }
 
@@ -508,129 +574,199 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
-    private static final Map<Class<?>, Writer> WRITERS;
-
-    static {
-        Map<Class<?>, Writer> writers = new HashMap<>();
-        writers.put(String.class, (o, v) -> {
-            o.writeByte((byte) 0);
-            o.writeString((String) v);
-        });
-        writers.put(Integer.class, (o, v) -> {
-            o.writeByte((byte) 1);
-            o.writeInt((Integer) v);
-        });
-        writers.put(Long.class, (o, v) -> {
-            o.writeByte((byte) 2);
-            o.writeLong((Long) v);
-        });
-        writers.put(Float.class, (o, v) -> {
-            o.writeByte((byte) 3);
-            o.writeFloat((float) v);
-        });
-        writers.put(Double.class, (o, v) -> {
-            o.writeByte((byte) 4);
-            o.writeDouble((double) v);
-        });
-        writers.put(Boolean.class, (o, v) -> {
-            o.writeByte((byte) 5);
-            o.writeBoolean((boolean) v);
-        });
-        writers.put(byte[].class, (o, v) -> {
-            o.writeByte((byte) 6);
-            final byte[] bytes = (byte[]) v;
-            o.writeVInt(bytes.length);
-            o.writeBytes(bytes);
-        });
-        writers.put(List.class, (o, v) -> {
-            o.writeByte((byte) 7);
-            final List list = (List) v;
-            o.writeVInt(list.size());
-            for (Object item : list) {
-                o.writeGenericValue(item);
-            }
-        });
-        writers.put(Object[].class, (o, v) -> {
-            o.writeByte((byte) 8);
-            final Object[] list = (Object[]) v;
-            o.writeVInt(list.length);
-            for (Object item : list) {
-                o.writeGenericValue(item);
-            }
-        });
-        writers.put(Map.class, (o, v) -> {
-            if (v instanceof LinkedHashMap) {
-                o.writeByte((byte) 9);
-            } else {
-                o.writeByte((byte) 10);
-            }
-            @SuppressWarnings("unchecked")
-            final Map<String, Object> map = (Map<String, Object>) v;
-            o.writeVInt(map.size());
-            for (Map.Entry<String, Object> entry : map.entrySet()) {
-                o.writeString(entry.getKey());
-                o.writeGenericValue(entry.getValue());
-            }
-        });
-        writers.put(Byte.class, (o, v) -> {
-            o.writeByte((byte) 11);
-            o.writeByte((Byte) v);
-        });
-        writers.put(Date.class, (o, v) -> {
-            o.writeByte((byte) 12);
-            o.writeLong(((Date) v).getTime());
-        });
-        writers.put(ReadableInstant.class, (o, v) -> {
-            o.writeByte((byte) 13);
-            final ReadableInstant instant = (ReadableInstant) v;
-            o.writeString(instant.getZone().getID());
-            o.writeLong(instant.getMillis());
-        });
-        writers.put(BytesReference.class, (o, v) -> {
-            o.writeByte((byte) 14);
-            o.writeBytesReference((BytesReference) v);
-        });
-        writers.put(Text.class, (o, v) -> {
-            o.writeByte((byte) 15);
-            o.writeText((Text) v);
-        });
-        writers.put(Short.class, (o, v) -> {
-            o.writeByte((byte) 16);
-            o.writeShort((Short) v);
-        });
-        writers.put(int[].class, (o, v) -> {
-            o.writeByte((byte) 17);
-            o.writeIntArray((int[]) v);
-        });
-        writers.put(long[].class, (o, v) -> {
-            o.writeByte((byte) 18);
-            o.writeLongArray((long[]) v);
-        });
-        writers.put(float[].class, (o, v) -> {
-            o.writeByte((byte) 19);
-            o.writeFloatArray((float[]) v);
-        });
-        writers.put(double[].class, (o, v) -> {
-            o.writeByte((byte) 20);
-            o.writeDoubleArray((double[]) v);
-        });
-        writers.put(BytesRef.class, (o, v) -> {
-            o.writeByte((byte) 21);
-            o.writeBytesRef((BytesRef) v);
-        });
-        writers.put(GeoPoint.class, (o, v) -> {
-            o.writeByte((byte) 22);
-            o.writeGeoPoint((GeoPoint) v);
-        });
-        writers.put(ZonedDateTime.class, (o, v) -> {
-            o.writeByte((byte) 23);
-            final ZonedDateTime zonedDateTime = (ZonedDateTime) v;
-            zonedDateTime.getZone().getId();
-            o.writeString(zonedDateTime.getZone().getId());
-            o.writeLong(zonedDateTime.toInstant().toEpochMilli());
-        });
-        WRITERS = Collections.unmodifiableMap(writers);
+    /**
+     * Writes an {@link Instant} to the stream with nanosecond resolution
+     */
+    public final void writeInstant(Instant instant) throws IOException {
+        writeLong(instant.getEpochSecond());
+        writeInt(instant.getNano());
     }
+
+    /**
+     * Writes an {@link Instant} to the stream, which could possibly be null
+     */
+    public final void writeOptionalInstant(@Nullable Instant instant) throws IOException {
+        if (instant == null) {
+            writeBoolean(false);
+        } else {
+            writeBoolean(true);
+            writeInstant(instant);
+        }
+    }
+
+    private static final Map<Class<?>, Writer> WRITERS = Map.ofEntries(
+            entry(
+                    String.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 0);
+                        o.writeString((String) v);
+                    }),
+            entry(
+                    Integer.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 1);
+                        o.writeInt((Integer) v);
+                    }),
+            entry(
+                    Long.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 2);
+                        o.writeLong((Long) v);
+                    }),
+            entry(
+                    Float.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 3);
+                        o.writeFloat((float) v);
+                    }),
+            entry(
+                    Double.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 4);
+                        o.writeDouble((double) v);
+                    }),
+            entry(
+                    Boolean.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 5);
+                        o.writeBoolean((boolean) v);
+                    }),
+            entry(
+                    byte[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 6);
+                        final byte[] bytes = (byte[]) v;
+                        o.writeVInt(bytes.length);
+                        o.writeBytes(bytes);
+                    }),
+            entry(
+                    List.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 7);
+                        final List list = (List) v;
+                        o.writeVInt(list.size());
+                        for (Object item : list) {
+                            o.writeGenericValue(item);
+                        }
+                    }),
+            entry(
+                    Object[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 8);
+                        final Object[] list = (Object[]) v;
+                        o.writeVInt(list.length);
+                        for (Object item : list) {
+                            o.writeGenericValue(item);
+                        }
+                    }),
+            entry(
+                    Map.class,
+                    (o, v) -> {
+                        if (v instanceof LinkedHashMap) {
+                            o.writeByte((byte) 9);
+                        } else {
+                            o.writeByte((byte) 10);
+                        }
+                        @SuppressWarnings("unchecked") final Map<String, Object> map = (Map<String, Object>) v;
+                        o.writeVInt(map.size());
+                        for (Map.Entry<String, Object> entry : map.entrySet()) {
+                            o.writeString(entry.getKey());
+                            o.writeGenericValue(entry.getValue());
+                        }
+                    }),
+            entry(
+                    Byte.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 11);
+                        o.writeByte((Byte) v);
+                    }),
+            entry(
+                    Date.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 12);
+                        o.writeLong(((Date) v).getTime());
+                    }),
+            entry(
+                    ReadableInstant.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 13);
+                        final ReadableInstant instant = (ReadableInstant) v;
+                        o.writeString(instant.getZone().getID());
+                        o.writeLong(instant.getMillis());
+                    }),
+            entry(
+                    BytesReference.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 14);
+                        o.writeBytesReference((BytesReference) v);
+                    }),
+            entry(
+                    Text.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 15);
+                        o.writeText((Text) v);
+                    }),
+            entry(
+                    Short.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 16);
+                        o.writeShort((Short) v);
+                    }),
+            entry(
+                    int[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 17);
+                        o.writeIntArray((int[]) v);
+                    }),
+            entry(
+                    long[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 18);
+                        o.writeLongArray((long[]) v);
+                    }),
+            entry(
+                    float[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 19);
+                        o.writeFloatArray((float[]) v);
+                    }),
+            entry(
+                    double[].class,
+                    (o, v) -> {
+                        o.writeByte((byte) 20);
+                        o.writeDoubleArray((double[]) v);
+                    }),
+            entry(
+                    BytesRef.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 21);
+                        o.writeBytesRef((BytesRef) v);
+                    }),
+            entry(
+                    GeoPoint.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 22);
+                        o.writeGeoPoint((GeoPoint) v);
+                    }),
+            entry(
+                    ZonedDateTime.class,
+                    (o, v) -> {
+                        o.writeByte((byte) 23);
+                        final ZonedDateTime zonedDateTime = (ZonedDateTime) v;
+                        o.writeString(zonedDateTime.getZone().getId());
+                        o.writeLong(zonedDateTime.toInstant().toEpochMilli());
+                    }),
+            entry(
+                    JodaCompatibleZonedDateTime.class,
+                    (o, v) -> {
+                        // write the joda compatibility datetime as joda datetime
+                        o.writeByte((byte) 13);
+                        final JodaCompatibleZonedDateTime zonedDateTime = (JodaCompatibleZonedDateTime) v;
+                        String zoneId = zonedDateTime.getZonedDateTime().getZone().getId();
+                        // joda does not understand "Z" for utc, so we must special case
+                        o.writeString(zoneId.equals("Z") ? DateTimeZone.UTC.getID() : zoneId);
+                        o.writeLong(zonedDateTime.toInstant().toEpochMilli());
+                    }));
 
     /**
      * Notice: when serialization a map, the stream out map with the stream in map maybe have the
@@ -724,20 +860,34 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
-    public <T extends Writeable> void writeArray(T[] array) throws IOException {
-        writeVInt(array.length);
-        for (T value: array) {
-            value.writeTo(this);
-        }
-    }
-
-    public <T extends Writeable> void writeOptionalArray(@Nullable T[] array) throws IOException {
+    /**
+     * Same as {@link #writeArray(Writer, Object[])} but the provided array may be null. An additional boolean value is
+     * serialized to indicate whether the array was null or not.
+     */
+    public <T> void writeOptionalArray(final Writer<T> writer, final @Nullable T[] array) throws IOException {
         if (array == null) {
             writeBoolean(false);
         } else {
             writeBoolean(true);
-            writeArray(array);
+            writeArray(writer, array);
         }
+    }
+
+    /**
+     * Writes the specified array of {@link Writeable}s. This method can be seen as
+     * writer version of {@link StreamInput#readArray(Writeable.Reader, IntFunction)}. The length of array encoded as a variable-length
+     * integer is first written to the stream, and then the elements of the array are written to the stream.
+     */
+    public <T extends Writeable> void writeArray(T[] array) throws IOException {
+        writeArray((out, value) -> value.writeTo(out), array);
+    }
+
+    /**
+     * Same as {@link #writeArray(Writeable[])} but the provided array may be null. An additional boolean value is
+     * serialized to indicate whether the array was null or not.
+     */
+    public <T extends Writeable> void writeOptionalArray(@Nullable T[] array) throws IOException {
+        writeOptionalArray((out, value) -> value.writeTo(out), array);
     }
 
     /**
@@ -852,8 +1002,12 @@ public abstract class StreamOutput extends OutputStream {
                 writeCause = false;
             } else if (throwable instanceof IOException) {
                 writeVInt(17);
+            } else if (throwable instanceof EsRejectedExecutionException) {
+                writeVInt(18);
+                writeBoolean(((EsRejectedExecutionException) throwable).isExecutorShutdown());
+                writeCause = false;
             } else {
-                ElasticsearchException ex;
+                final ElasticsearchException ex;
                 if (throwable instanceof ElasticsearchException && ElasticsearchException.isRegistered(throwable.getClass(), version)) {
                     ex = (ElasticsearchException) throwable;
                 } else {
@@ -863,7 +1017,6 @@ public abstract class StreamOutput extends OutputStream {
                 writeVInt(ElasticsearchException.getId(ex.getClass()));
                 ex.writeTo(this);
                 return;
-
             }
             if (writeMessage) {
                 writeOptionalString(throwable.getMessage());
@@ -911,6 +1064,13 @@ public abstract class StreamOutput extends OutputStream {
     }
 
     /**
+     * Write a {@linkplain ZoneId} to the stream.
+     */
+    public void writeZoneId(ZoneId timeZone) throws IOException {
+        writeString(timeZone.getId());
+    }
+
+    /**
      * Write an optional {@linkplain DateTimeZone} to the stream.
      */
     public void writeOptionalTimeZone(@Nullable DateTimeZone timeZone) throws IOException {
@@ -919,6 +1079,18 @@ public abstract class StreamOutput extends OutputStream {
         } else {
             writeBoolean(true);
             writeTimeZone(timeZone);
+        }
+    }
+
+    /**
+     * Write an optional {@linkplain ZoneId} to the stream.
+     */
+    public void writeOptionalZoneId(@Nullable ZoneId timeZone) throws IOException {
+        if (timeZone == null) {
+            writeBoolean(false);
+        } else {
+            writeBoolean(true);
+            writeZoneId(timeZone);
         }
     }
 
@@ -933,23 +1105,45 @@ public abstract class StreamOutput extends OutputStream {
     }
 
     /**
+     * Writes a collection to this stream. The corresponding collection can be read from a stream input using
+     * {@link StreamInput#readList(Writeable.Reader)}.
+     *
+     * @param collection the collection to write to this stream
+     * @throws IOException if an I/O exception occurs writing the collection
+     */
+    public void writeCollection(final Collection<? extends Writeable> collection) throws IOException {
+        writeCollection(collection, (o, v) -> v.writeTo(o));
+    }
+
+    /**
      * Writes a list of {@link Writeable} objects
      */
     public void writeList(List<? extends Writeable> list) throws IOException {
-        writeVInt(list.size());
-        for (Writeable obj: list) {
-            obj.writeTo(this);
+        writeCollection(list);
+    }
+
+    /**
+     * Writes a collection of objects via a {@link Writer}.
+     *
+     * @param collection the collection of objects
+     * @throws IOException if an I/O exception occurs writing the collection
+     */
+    public <T> void writeCollection(final Collection<T> collection, final Writer<T> writer) throws IOException {
+        writeVInt(collection.size());
+        for (final T val: collection) {
+            writer.write(this, val);
         }
     }
 
     /**
-     * Writes a list of strings
+     * Writes a collection of a strings. The corresponding collection can be read from a stream input using
+     * {@link StreamInput#readList(Writeable.Reader)}.
+     *
+     * @param collection the collection of strings
+     * @throws IOException if an I/O exception occurs writing the collection
      */
-    public void writeStringList(List<String> list) throws IOException {
-        writeVInt(list.size());
-        for (String string: list) {
-            this.writeString(string);
-        }
+    public void writeStringCollection(final Collection<String> collection) throws IOException {
+        writeCollection(collection, StreamOutput::writeString);
     }
 
     /**
@@ -963,10 +1157,40 @@ public abstract class StreamOutput extends OutputStream {
     }
 
     /**
-     * Writes an enum with type E that by serialized it based on it's ordinal value
+     * Writes an enum with type E based on its ordinal value
      */
     public <E extends Enum<E>> void writeEnum(E enumValue) throws IOException {
         writeVInt(enumValue.ordinal());
+    }
+
+    /**
+     * Writes an EnumSet with type E that by serialized it based on it's ordinal value
+     */
+    public <E extends Enum<E>> void writeEnumSet(EnumSet<E> enumSet) throws IOException {
+        writeVInt(enumSet.size());
+        for (E e : enumSet) {
+            writeEnum(e);
+        }
+    }
+
+    /**
+     * Write a {@link TimeValue} to the stream
+     */
+    public void writeTimeValue(TimeValue timeValue) throws IOException {
+        writeZLong(timeValue.duration());
+        writeByte(TIME_UNIT_BYTE_MAP.get(timeValue.timeUnit()));
+    }
+
+    /**
+     * Write an optional {@link TimeValue} to the stream.
+     */
+    public void writeOptionalTimeValue(@Nullable TimeValue timeValue) throws IOException {
+        if (timeValue == null) {
+            writeBoolean(false);
+        } else {
+            writeBoolean(true);
+            writeTimeValue(timeValue);
+        }
     }
 
 }

@@ -19,10 +19,15 @@
 
 package org.elasticsearch.index.mapper;
 
+import com.carrotsearch.randomizedtesting.annotations.Timeout;
+
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.IndexableField;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.compress.CompressedXContent;
+import org.elasticsearch.common.xcontent.ToXContentObject;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.mapper.NumberFieldMapper.NumberType;
@@ -35,6 +40,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
+import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.hamcrest.Matchers.containsString;
 
 public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
@@ -47,25 +53,25 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     public void doTestDefaults(String type) throws Exception {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", 123)
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", 123)
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
         assertEquals(2, fields.length);
         IndexableField pointField = fields[0];
-        assertEquals(1, pointField.fieldType().pointDimensionCount());
+        assertEquals(1, pointField.fieldType().pointIndexDimensionCount());
         assertFalse(pointField.fieldType().stored());
         assertEquals(123, pointField.numericValue().doubleValue(), 0d);
         IndexableField dvField = fields[1];
@@ -75,19 +81,19 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     public void doTestNotIndexed(String type) throws Exception {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).field("index", false).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", 123)
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", 123)
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
@@ -98,49 +104,49 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     public void doTestNoDocValues(String type) throws Exception {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).field("doc_values", false).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", 123)
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", 123)
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
         assertEquals(1, fields.length);
         IndexableField pointField = fields[0];
-        assertEquals(1, pointField.fieldType().pointDimensionCount());
+        assertEquals(1, pointField.fieldType().pointIndexDimensionCount());
         assertEquals(123, pointField.numericValue().doubleValue(), 0d);
     }
 
     @Override
     public void doTestStore(String type) throws Exception {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).field("store", true).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", 123)
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", 123)
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
         assertEquals(3, fields.length);
         IndexableField pointField = fields[0];
-        assertEquals(1, pointField.fieldType().pointDimensionCount());
+        assertEquals(1, pointField.fieldType().pointIndexDimensionCount());
         assertEquals(123, pointField.numericValue().doubleValue(), 0d);
         IndexableField dvField = fields[1];
         assertEquals(DocValuesType.SORTED_NUMERIC, dvField.fieldType().docValuesType());
@@ -151,42 +157,42 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     public void doTestCoerce(String type) throws IOException {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", "123")
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", "123")
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
         assertEquals(2, fields.length);
         IndexableField pointField = fields[0];
-        assertEquals(1, pointField.fieldType().pointDimensionCount());
+        assertEquals(1, pointField.fieldType().pointIndexDimensionCount());
         assertEquals(123, pointField.numericValue().doubleValue(), 0d);
         IndexableField dvField = fields[1];
         assertEquals(DocValuesType.SORTED_NUMERIC, dvField.fieldType().docValuesType());
 
-        mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).field("coerce", false).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper2 = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper2.mappingSource().toString());
 
-        ThrowingRunnable runnable = () -> mapper2.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", "123")
-                .endObject()
-                .bytes(),
+        ThrowingRunnable runnable = () -> mapper2.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", "123")
+                        .endObject()),
                 XContentType.JSON));
         MapperParsingException e = expectThrows(MapperParsingException.class, runnable);
         assertThat(e.getCause().getMessage(), containsString("passed as String"));
@@ -194,19 +200,19 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     protected void doTestDecimalCoerce(String type) throws IOException {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("field").field("type", type).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", "7.89")
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", "7.89")
+                        .endObject()),
                 XContentType.JSON));
 
         IndexableField[] fields = doc.rootDoc().getFields("field");
@@ -216,57 +222,78 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     public void testIgnoreMalformed() throws Exception {
         for (String type : TYPES) {
-            doTestIgnoreMalformed(type);
+            for (Object malformedValue : new Object[] { "a", Boolean.FALSE }) {
+                String mapping = Strings.toString(jsonBuilder().startObject().startObject("type").startObject("properties")
+                        .startObject("field").field("type", type).endObject().endObject().endObject().endObject());
+
+                DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
+
+                assertEquals(mapping, mapper.mappingSource().toString());
+
+                ThrowingRunnable runnable = () -> mapper.parse(new SourceToParse("test", "type", "1",
+                        BytesReference.bytes(jsonBuilder().startObject().field("field", malformedValue).endObject()), XContentType.JSON));
+                MapperParsingException e = expectThrows(MapperParsingException.class, runnable);
+                if (malformedValue instanceof String) {
+                    assertThat(e.getCause().getMessage(), containsString("For input string: \"a\""));
+                } else {
+                    assertThat(e.getCause().getMessage(), containsString("Current token"));
+                    assertThat(e.getCause().getMessage(), containsString("not numeric, can not use numeric value accessors"));
+                }
+
+                mapping = Strings.toString(jsonBuilder().startObject().startObject("type").startObject("properties").startObject("field")
+                        .field("type", type).field("ignore_malformed", true).endObject().endObject().endObject().endObject());
+
+                DocumentMapper mapper2 = parser.parse("type", new CompressedXContent(mapping));
+
+                ParsedDocument doc = mapper2.parse(new SourceToParse("test", "type", "1",
+                        BytesReference.bytes(jsonBuilder().startObject().field("field", malformedValue).endObject()), XContentType.JSON));
+
+                IndexableField[] fields = doc.rootDoc().getFields("field");
+                assertEquals(0, fields.length);
+                assertArrayEquals(new String[] { "field" }, doc.rootDoc().getValues("_ignored"));
+            }
         }
     }
 
-    private void doTestIgnoreMalformed(String type) throws IOException {
-        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
-                .startObject("properties").startObject("field").field("type", type).endObject().endObject()
-                .endObject().endObject().string();
+    /**
+     * Test that in case the malformed value is an xContent object we throw error regardless of `ignore_malformed`
+     */
+    public void testIgnoreMalformedWithObject() throws Exception {
+        for (String type : TYPES) {
+            Object malformedValue = new ToXContentObject() {
+                @Override
+                public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+                    return builder.startObject().field("foo", "bar").endObject();
+                }
+            };
+            for (Boolean ignoreMalformed : new Boolean[] { true, false }) {
+                String mapping = Strings.toString(
+                        jsonBuilder().startObject().startObject("type").startObject("properties").startObject("field").field("type", type)
+                                .field("ignore_malformed", ignoreMalformed).endObject().endObject().endObject().endObject());
+                DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
+                assertEquals(mapping, mapper.mappingSource().toString());
 
-        DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
-
-        assertEquals(mapping, mapper.mappingSource().toString());
-
-        ThrowingRunnable runnable = () -> mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", "a")
-                .endObject()
-                .bytes(),
-                XContentType.JSON));
-        MapperParsingException e = expectThrows(MapperParsingException.class, runnable);
-
-        assertThat(e.getCause().getMessage(), containsString("For input string: \"a\""));
-
-        mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
-                .startObject("properties").startObject("field").field("type", type).field("ignore_malformed", true).endObject().endObject()
-                .endObject().endObject().string();
-
-        DocumentMapper mapper2 = parser.parse("type", new CompressedXContent(mapping));
-
-        ParsedDocument doc = mapper2.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .field("field", "a")
-                .endObject()
-                .bytes(),
-                XContentType.JSON));
-
-        IndexableField[] fields = doc.rootDoc().getFields("field");
-        assertEquals(0, fields.length);
+                MapperParsingException e = expectThrows(MapperParsingException.class,
+                        () -> mapper.parse(new SourceToParse("test", "type", "1",
+                                BytesReference.bytes(jsonBuilder().startObject().field("field", malformedValue).endObject()),
+                                XContentType.JSON)));
+                assertThat(e.getCause().getMessage(), containsString("Current token"));
+                assertThat(e.getCause().getMessage(), containsString("not numeric, can not use numeric value accessors"));
+            }
+        }
     }
 
     public void testRejectNorms() throws IOException {
         // not supported as of 5.0
         for (String type : TYPES) {
             DocumentMapperParser parser = createIndex("index-" + type).mapperService().documentMapperParser();
-            String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+            String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties")
                     .startObject("foo")
                         .field("type", type)
                         .field("norms", random().nextBoolean())
                     .endObject()
-                .endObject().endObject().endObject().string();
+                .endObject().endObject().endObject());
             MapperParsingException e = expectThrows(MapperParsingException.class,
                     () -> parser.parse("type", new CompressedXContent(mapping)));
             assertThat(e.getMessage(), containsString("Mapping definition for [foo] has unsupported parameters:  [norms"));
@@ -279,13 +306,13 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
     public void testRejectIndexOptions() throws IOException {
         for (String type : TYPES) {
             DocumentMapperParser parser = createIndex("index-" + type).mapperService().documentMapperParser();
-            String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+            String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties")
                     .startObject("foo")
                         .field("type", type)
                     .field("index_options", randomFrom(new String[] { "docs", "freqs", "positions", "offsets" }))
                     .endObject()
-                .endObject().endObject().endObject().string();
+                .endObject().endObject().endObject());
             MapperParsingException e = expectThrows(MapperParsingException.class,
                     () -> parser.parse("type", new CompressedXContent(mapping)));
             assertThat(e.getMessage(), containsString("index_options not allowed in field [foo] of type [" + type +"]"));
@@ -294,23 +321,23 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
 
     @Override
     protected void doTestNullValue(String type) throws IOException {
-        String mapping = XContentFactory.jsonBuilder().startObject()
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject()
                 .startObject("type")
                     .startObject("properties")
                         .startObject("field")
                             .field("type", type)
                         .endObject()
                     .endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .nullField("field")
-                .endObject()
-                .bytes(),
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .nullField("field")
+                        .endObject()),
                 XContentType.JSON));
         assertArrayEquals(new IndexableField[0], doc.rootDoc().getFields("field"));
 
@@ -320,7 +347,7 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
         } else {
             missing = 123L;
         }
-        mapping = XContentFactory.jsonBuilder().startObject()
+        mapping = Strings.toString(XContentFactory.jsonBuilder().startObject()
                 .startObject("type")
                     .startObject("properties")
                         .startObject("field")
@@ -328,21 +355,21 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
                             .field("null_value", missing)
                         .endObject()
                     .endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
         mapper = parser.parse("type", new CompressedXContent(mapping));
         assertEquals(mapping, mapper.mappingSource().toString());
 
-        doc = mapper.parse(SourceToParse.source("test", "type", "1", XContentFactory.jsonBuilder()
-                .startObject()
-                .nullField("field")
-                .endObject()
-                .bytes(),
+        doc = mapper.parse(new SourceToParse("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .nullField("field")
+                        .endObject()),
                 XContentType.JSON));
         IndexableField[] fields = doc.rootDoc().getFields("field");
         assertEquals(2, fields.length);
         IndexableField pointField = fields[0];
-        assertEquals(1, pointField.fieldType().pointDimensionCount());
+        assertEquals(1, pointField.fieldType().pointIndexDimensionCount());
         assertFalse(pointField.fieldType().stored());
         assertEquals(123, pointField.numericValue().doubleValue(), 0d);
         IndexableField dvField = fields[1];
@@ -354,9 +381,9 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
     public void testEmptyName() throws IOException {
         // after version 5
         for (String type : TYPES) {
-            String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+            String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties").startObject("").field("type", type).endObject().endObject()
-                .endObject().endObject().string();
+                .endObject().endObject());
 
             IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
                 () -> parser.parse("type", new CompressedXContent(mapping))
@@ -365,17 +392,20 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
         }
     }
 
+    @Timeout(millis = 30000)
     public void testOutOfRangeValues() throws IOException {
         final List<OutOfRangeSpec<Object>> inputs = Arrays.asList(
             OutOfRangeSpec.of(NumberType.BYTE, "128", "is out of range for a byte"),
             OutOfRangeSpec.of(NumberType.SHORT, "32768", "is out of range for a short"),
             OutOfRangeSpec.of(NumberType.INTEGER, "2147483648", "is out of range for an integer"),
             OutOfRangeSpec.of(NumberType.LONG, "9223372036854775808", "out of range for a long"),
+            OutOfRangeSpec.of(NumberType.LONG, "1e999999999", "out of range for a long"),
 
             OutOfRangeSpec.of(NumberType.BYTE, "-129", "is out of range for a byte"),
             OutOfRangeSpec.of(NumberType.SHORT, "-32769", "is out of range for a short"),
             OutOfRangeSpec.of(NumberType.INTEGER, "-2147483649", "is out of range for an integer"),
             OutOfRangeSpec.of(NumberType.LONG, "-9223372036854775809", "out of range for a long"),
+            OutOfRangeSpec.of(NumberType.LONG, "-1e999999999", "out of range for a long"),
 
             OutOfRangeSpec.of(NumberType.BYTE, 128, "is out of range for a byte"),
             OutOfRangeSpec.of(NumberType.SHORT, 32768, "out of range of Java short"),
@@ -417,36 +447,40 @@ public class NumberFieldMapperTests extends AbstractNumericFieldMapperTestCase {
                     e.getCause().getMessage(), containsString(item.message));
             }
         }
+
+        // the following two strings are in-range for a long after coercion
+        parseRequest(NumberType.LONG, createIndexRequest("9223372036854775807.9"));
+        parseRequest(NumberType.LONG, createIndexRequest("-9223372036854775808.9"));
     }
 
     private void parseRequest(NumberType type, BytesReference content) throws IOException {
-        createDocumentMapper(type).parse(SourceToParse.source("test", "type", "1", content, XContentType.JSON));
+        createDocumentMapper(type).parse(new SourceToParse("test", "type", "1", content, XContentType.JSON));
     }
 
     private DocumentMapper createDocumentMapper(NumberType type) throws IOException {
-        String mapping = XContentFactory.jsonBuilder()
-            .startObject()
-                .startObject("type")
-                    .startObject("properties")
-                        .startObject("field")
-                            .field("type", type.typeName())
+        String mapping = Strings
+            .toString(XContentFactory.jsonBuilder()
+                .startObject()
+                    .startObject("type")
+                        .startObject("properties")
+                            .startObject("field")
+                                .field("type", type.typeName())
+                            .endObject()
                         .endObject()
                     .endObject()
-                .endObject()
-            .endObject()
-            .string();
+                .endObject());
 
         return parser.parse("type", new CompressedXContent(mapping));
     }
 
     private BytesReference createIndexRequest(Object value) throws IOException {
         if (value instanceof BigInteger) {
-            return XContentFactory.jsonBuilder()
+            return BytesReference.bytes(XContentFactory.jsonBuilder()
                 .startObject()
                     .rawField("field", new ByteArrayInputStream(value.toString().getBytes("UTF-8")), XContentType.JSON)
-                .endObject().bytes();
+                .endObject());
         } else {
-            return XContentFactory.jsonBuilder().startObject().field("field", value).endObject().bytes();
+            return BytesReference.bytes(XContentFactory.jsonBuilder().startObject().field("field", value).endObject());
         }
     }
 }

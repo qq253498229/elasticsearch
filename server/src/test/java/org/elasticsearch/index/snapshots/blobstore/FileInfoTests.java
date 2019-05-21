@@ -23,7 +23,6 @@ import org.apache.lucene.util.Version;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -56,8 +55,8 @@ public class FileInfoTests extends ESTestCase {
             ByteSizeValue size = new ByteSizeValue(Math.abs(randomLong()));
             BlobStoreIndexShardSnapshot.FileInfo info = new BlobStoreIndexShardSnapshot.FileInfo("_foobar", meta, size);
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON).prettyPrint();
-            BlobStoreIndexShardSnapshot.FileInfo.toXContent(info, builder, ToXContent.EMPTY_PARAMS);
-            byte[] xcontent = BytesReference.toBytes(shuffleXContent(builder).bytes());
+            BlobStoreIndexShardSnapshot.FileInfo.toXContent(info, builder);
+            byte[] xcontent = BytesReference.toBytes(BytesReference.bytes(shuffleXContent(builder)));
 
             final BlobStoreIndexShardSnapshot.FileInfo parsedInfo;
             try (XContentParser parser = createParser(JsonXContent.jsonXContent, xcontent)) {
@@ -116,7 +115,7 @@ public class FileInfoTests extends ESTestCase {
             builder.field(FileInfo.WRITTEN_BY, Version.LATEST.toString());
             builder.field(FileInfo.CHECKSUM, "666");
             builder.endObject();
-            byte[] xContent = BytesReference.toBytes(builder.bytes());
+            byte[] xContent = BytesReference.toBytes(BytesReference.bytes(builder));
 
             if (failure == null) {
                 // No failures should read as usual

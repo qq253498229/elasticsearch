@@ -19,18 +19,22 @@ case "$1" in
         if [ -n $2 ]; then
             IS_UPGRADE=true
         fi
+        PACKAGE=deb
     ;;
     abort-upgrade|abort-remove|abort-deconfigure)
+        PACKAGE=deb
     ;;
 
     # RedHat ####################################################
     1)
         # If $1=1 this is an install
         IS_UPGRADE=false
+        PACKAGE=rpm
     ;;
     2)
         # If $1=1 this is an upgrade
         IS_UPGRADE=true
+        PACKAGE=rpm
     ;;
 
     *)
@@ -89,21 +93,16 @@ elif [ "$RESTART_ON_UPGRADE" = "true" ]; then
     echo " OK"
 fi
 
-chown -R elasticsearch:elasticsearch /var/lib/elasticsearch
-chown -R elasticsearch:elasticsearch /var/log/elasticsearch
-chown -R root:elasticsearch /etc/elasticsearch
-chmod g+s /etc/elasticsearch
-chmod 0750 /etc/elasticsearch
-
-if [ -f ${path.env} ]; then
-    chown root:elasticsearch ${path.env}
-fi
-
-if [ ! -f /etc/elasticsearch/elasticsearch.keystore ]; then
-    /usr/share/elasticsearch/bin/elasticsearch-keystore create
-    chown root:elasticsearch /etc/elasticsearch/elasticsearch.keystore
-    chmod 660 /etc/elasticsearch/elasticsearch.keystore
-    md5sum /etc/elasticsearch/elasticsearch.keystore > /etc/elasticsearch/.elasticsearch.keystore.initial_md5sum
+# the equivalent code for rpm is in posttrans
+if [ "$PACKAGE" = "deb" ]; then
+    if [ ! -f /etc/elasticsearch/elasticsearch.keystore ]; then
+        /usr/share/elasticsearch/bin/elasticsearch-keystore create
+        chown root:elasticsearch /etc/elasticsearch/elasticsearch.keystore
+        chmod 660 /etc/elasticsearch/elasticsearch.keystore
+        md5sum /etc/elasticsearch/elasticsearch.keystore > /etc/elasticsearch/.elasticsearch.keystore.initial_md5sum
+    else
+        /usr/share/elasticsearch/bin/elasticsearch-keystore upgrade
+    fi
 fi
 
 ${scripts.footer}

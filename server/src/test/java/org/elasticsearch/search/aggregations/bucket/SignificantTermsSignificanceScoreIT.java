@@ -21,6 +21,7 @@ package org.elasticsearch.search.aggregations.bucket;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
@@ -29,6 +30,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.QueryShardException;
 import org.elasticsearch.plugins.Plugin;
@@ -37,6 +39,7 @@ import org.elasticsearch.script.MockScriptPlugin;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.Aggregations;
 import org.elasticsearch.search.aggregations.bucket.filter.InternalFilter;
 import org.elasticsearch.search.aggregations.bucket.significant.SignificantTerms;
@@ -131,7 +134,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                     );
         }
 
-        SearchResponse response = request.execute().actionGet();
+        SearchResponse response = request.get();
         assertSearchResponse(response);
         StringTerms classes = response.getAggregations().get("class");
         assertThat(classes.getBuckets().size(), equalTo(2));
@@ -153,7 +156,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
         // we run the same test again but this time we do not call assertSearchResponse() before the assertions
         // the reason is that this would trigger toXContent and we would like to check that this has no potential side effects
 
-        response = request.execute().actionGet();
+        response = request.get();
 
         classes = (StringTerms) response.getAggregations().get("class");
         assertThat(classes.getBuckets().size(), equalTo(2));
@@ -282,7 +285,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                             .subAggregation(significantTerms("sig_terms").field(TEXT_FIELD)));
         }
 
-        SearchResponse response = request.execute().actionGet();
+        SearchResponse response = request.get();
 
 
         assertSearchResponse(response);
@@ -334,7 +337,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                 + "\"score\":0.75,"
                 + "\"bg_count\":4"
                 + "}]}}]}}";
-        assertThat(responseBuilder.string(), equalTo(result));
+        assertThat(Strings.toString(responseBuilder), equalTo(result));
 
     }
 
@@ -391,7 +394,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                                             .minDocCount(1)));
         }
 
-        request.execute().actionGet();
+        request.get();
 
     }
 
@@ -436,7 +439,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                                                     significanceHeuristicExpectingSuperset)));
         }
 
-        SearchResponse response1 = request1.execute().actionGet();
+        SearchResponse response1 = request1.get();
         assertSearchResponse(response1);
 
         SearchRequestBuilder request2;
@@ -469,7 +472,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                                     .significanceHeuristic(significanceHeuristicExpectingSeparateSets)));
         }
 
-        SearchResponse response2 = request2.execute().actionGet();
+        SearchResponse response2 = request2.get();
 
         StringTerms classes = response1.getAggregations().get("class");
 
@@ -521,7 +524,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                             .significanceHeuristic(heuristic)
                             .minDocCount(1).shardSize(1000).size(1000)));
         }
-        SearchResponse response = request.execute().actionGet();
+        SearchResponse response = request.get();
         assertSearchResponse(response);
 
         assertSearchResponse(response);
@@ -539,6 +542,37 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
             SignificantTerms.Bucket classBBucket = classBBucketIterator.next();
             assertThat(classABucket.getKey(), equalTo(classBBucket.getKey()));
             assertThat(classABucket.getSignificanceScore(), closeTo(classBBucket.getSignificanceScore(), 1.e-5));
+        }
+    }
+
+    /**
+     * A simple test that adds a sub-aggregation to a significant terms aggregation,
+     * to help check that sub-aggregation collection is handled correctly.
+     */
+    public void testSubAggregations() throws Exception {
+        indexEqualTestData();
+
+        QueryBuilder query = QueryBuilders.termsQuery(TEXT_FIELD, "a", "b");
+        AggregationBuilder subAgg = terms("class").field(CLASS_FIELD);
+        AggregationBuilder agg = significantTerms("significant_terms")
+            .field(TEXT_FIELD)
+            .executionHint(randomExecutionHint())
+            .significanceHeuristic(new ChiSquare(true, true))
+            .minDocCount(1).shardSize(1000).size(1000)
+            .subAggregation(subAgg);
+
+        SearchResponse response = client().prepareSearch("test")
+            .setQuery(query)
+            .addAggregation(agg)
+            .get();
+        assertSearchResponse(response);
+
+        SignificantTerms sigTerms = response.getAggregations().get("significant_terms");
+        assertThat(sigTerms.getBuckets().size(), equalTo(2));
+
+        for (SignificantTerms.Bucket bucket : sigTerms) {
+            StringTerms terms = bucket.getAggregations().get("class");
+            assertThat(terms.getBuckets().size(), equalTo(2));
         }
     }
 
@@ -599,7 +633,7 @@ public class SignificantTermsSignificanceScoreIT extends ESIntegTestCase {
                             .significanceHeuristic(scriptHeuristic)
                             .minDocCount(1).shardSize(2).size(2)));
         }
-        SearchResponse response = request.execute().actionGet();
+        SearchResponse response = request.get();
         assertSearchResponse(response);
         for (Terms.Bucket classBucket : ((Terms) response.getAggregations().get("class")).getBuckets()) {
             SignificantTerms sigTerms = classBucket.getAggregations().get("mySignificantTerms");

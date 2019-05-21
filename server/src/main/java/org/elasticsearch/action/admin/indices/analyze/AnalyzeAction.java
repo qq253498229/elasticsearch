@@ -20,9 +20,9 @@
 package org.elasticsearch.action.admin.indices.analyze;
 
 import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.common.io.stream.Writeable;
 
-public class AnalyzeAction extends Action<AnalyzeRequest, AnalyzeResponse, AnalyzeRequestBuilder> {
+public class AnalyzeAction extends Action<AnalyzeResponse> {
 
     public static final AnalyzeAction INSTANCE = new AnalyzeAction();
     public static final String NAME = "indices:admin/analyze";
@@ -32,12 +32,12 @@ public class AnalyzeAction extends Action<AnalyzeRequest, AnalyzeResponse, Analy
     }
 
     @Override
-    public AnalyzeResponse newResponse() {
-        return new AnalyzeResponse();
+    public Writeable.Reader<AnalyzeResponse> getResponseReader() {
+        return AnalyzeResponse::new;
     }
 
     @Override
-    public AnalyzeRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new AnalyzeRequestBuilder(client, this);
+    public AnalyzeResponse newResponse() {
+        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 }
